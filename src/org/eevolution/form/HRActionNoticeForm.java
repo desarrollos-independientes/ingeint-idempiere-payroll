@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import org.adempiere.exceptions.AdempiereException;
 import org.adempiere.webui.component.Button;
@@ -47,11 +48,12 @@ import org.compiere.util.DB;
 import org.compiere.util.Env;
 import org.compiere.util.KeyNamePair;
 import org.compiere.util.Msg;
-import org.eevolution.model.I_HR_Attribute;
+import org.compiere.util.Util;
 import org.eevolution.model.I_HR_Concept;
-import org.eevolution.model.MHRAttribute;
 import org.eevolution.model.MHRConcept;
 import org.eevolution.model.MHREmployee;
+import org.eevolution.model.MHRMovement;
+import org.eevolution.model.MHRPayroll;
 import org.eevolution.model.MHRPeriod;
 import org.eevolution.model.MHRProcess;
 import org.eevolution.model.X_HR_Concept;
@@ -62,6 +64,8 @@ import org.zkoss.zul.Cell;
 import org.zkoss.zul.Center;
 import org.zkoss.zul.North;
 import org.zkoss.zul.Space;
+
+import dev.itechsolutions.utils.ColumnUtils;
 
 /**
  * Payroll Notice Form
@@ -102,7 +106,7 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 	private MHREmployee employee;
 	private MHRPeriod period;
 	private WDateEditor fieldValidTo;
-	private List<MHRAttribute> listAttribute;
+	private List<MHRMovement> listMovement;
 	private Label labelValidFromAtt;
 	private Label labelValidToAtt;
 	private int AD_Org_ID;
@@ -324,39 +328,61 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 
 		int processId = ((KeyNamePair) fieldProcess.getSelectedItem().getValue()).getKey();
 		process = new MHRProcess(Env.getCtx(), processId, null);
-		listAttribute = new ArrayList<MHRAttribute>();
-
-		if (process.getHR_Period_ID() > 0) {
+		listMovement = new ArrayList<MHRMovement>();
+		
+		if (process.getHR_Period_ID() > 0)
+		{
 			period = MHRPeriod.get(Env.getCtx(), process.getHR_Period_ID());
 			fieldValidFrom.setValue(period.getStartDate());
 			fieldValidTo.setValue(period.getEndDate());
-		} else if (processId > 0) {
+		} else if (processId > 0)
 			throw new AdempiereException(Msg.translate(Env.getCtx(), "PeriodNotFound"));
-		}
-
+		
 		StringBuilder sql = new StringBuilder("SELECT BP.C_BPartner_ID, BP.Name FROM HR_Employee HRE JOIN C_BPartner BP ON "
-				+ "(BP.C_BPartner_ID = HRE.C_BPartner_ID) WHERE HRE.IsActive = 'Y'  ");
-				
+				+ "(BP.C_BPartner_ID = HRE.C_BPartner_ID) JOIN HR_Payroll PR ON PR.HR_Payroll_ID = HRE.HR_Payroll_ID"
+				+ " WHERE HRE.IsActive = 'Y' AND BP.IsActive = 'Y'");
+		
+		List<Object> params = new ArrayList<Object>(5);
+		
 		// This payroll not content periods, NOT IS a Regular Payroll > ogi-cd 28Nov2007
 		if(process.getHR_Payroll_ID() != 0 && process.getHR_Period_ID() != 0)
 		{
-			sql.append(" AND HRE.HR_Payroll_ID="+process.getHR_Payroll_ID()+" AND HRE.AD_Org_ID = "+process.getAD_Org_ID());
+			MHRPayroll payroll = (MHRPayroll) process.getHR_Payroll();
+			boolean isConceptApplicable = payroll
+					.get_ValueAsBoolean(ColumnUtils.COLUMNNAME_IsConceptApplicable);
+			
+			sql.append(" AND (HRE.HR_Payroll_ID=?");
+			params.add(process.getHR_Payroll_ID());
+			
+			if (isConceptApplicable)
+			{
+				sql.append(" OR PR.HR_Contract_ID = ?");
+				params.add(payroll.getHR_Contract_ID());
+			}
+			
+			sql.append(") AND HRE.AD_Org_ID = ?");
+			params.add(process.getAD_Org_ID());
 		}
 		
 		// Selected Department
-		if (process.getHR_Department_ID() != 0) 
+		if (process.getHR_Department_ID() != 0)
 		{
-			sql.append(" AND HRE.HR_Department_ID = "+process.getHR_Department_ID());
+			sql.append(" AND HRE.HR_Department_ID = ?");
+			params.add(process.getHR_Department_ID());
 		}
 		
 		// Selected Employee
 		if (process.getC_BPartner_ID() != 0)
 		{
-			sql.append(" AND BP.C_BPartner_ID = "+process.getC_BPartner_ID());
+			sql.append(" AND BP.C_BPartner_ID = ?");
+			params.add(process.getC_BPartner_ID());
 		}
-				
+		
 		sql.append(" ORDER BY BP.Name");
-		KeyNamePair[] processData = DB.getKeyNamePairs(sql.toString(), true);
+		
+		KeyNamePair[] processData = DB.getKeyNamePairs(sql.toString(), true
+				, params.toArray(new Object[params.size()]));
+		
 		for (KeyNamePair item : processData)
 			fieldEmployee.appendItem(item.getName(), item);
 		fieldEmployee.setSelectedIndex(0);
@@ -400,13 +426,31 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 		if (partner.get_ID() <= 0) {
 			throw new AdempiereException(Msg.translate(Env.getCtx(), "SelectRecord"));
 		}
-
+		
 		ArrayList<Object> parameters = new ArrayList<Object>();
 		parameters.add(partner.get_ID());
-		parameters.add(process.getAD_Org_ID());
 		parameters.add(process.getHR_Payroll_ID());
-
-		employee = new Query(Env.getCtx(), MHREmployee.Table_Name, " C_BPartner_ID=? AND AD_Org_ID=? AND HR_Payroll_ID=? ", null).setParameters(parameters).firstOnly();
+		
+		MHRPayroll payroll = (MHRPayroll) process.getHR_Payroll();
+		boolean isConceptApplicable = payroll.get_ValueAsBoolean(ColumnUtils.COLUMNNAME_IsConceptApplicable);
+		
+		StringBuilder where = new StringBuilder("HR_Employee.C_BPartner_ID=?")
+				.append(" AND (HR_Employee.HR_Payroll_ID=?");
+		
+		if (isConceptApplicable)
+		{
+			where.append(" OR p.HR_Contract_ID = ?");
+			parameters.add(payroll.getHR_Contract_ID());
+		}
+		
+		where.append(") AND HR_Employee.AD_Org_ID=?");
+		parameters.add(process.getAD_Org_ID());
+		
+		employee = new Query(Env.getCtx(), MHREmployee.Table_Name
+				, where.toString(), null)
+				.addJoinClause("INNER JOIN HR_Payroll p ON p.HR_Payroll_ID = HR_Employee.HR_Payroll_ID")
+				.setParameters(parameters)
+				.firstOnly();
 		loadTable();
 	}
 
@@ -452,94 +496,228 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 			fieldDate.setVisible(false);
 		}
 	}
-
+	
 	public void loadTable() {
+		
 		ArrayList<Object> parameters = new ArrayList<Object>();
 		parameters.add(employee.getC_BPartner_ID());
-		parameters.add(period.getStartDate());
-		listAttribute = new Query(Env.getCtx(), I_HR_Attribute.Table_Name, " C_BPartner_ID = ? AND (ValidTo >= ? OR ValidTo IS NULL) ", null).setParameters(parameters).setOrderBy("ValidTo").setOnlyActiveRecords(true).list();
-
+		//parameters.add(period.getEndDate());
+		//parameters.add(period.getStartDate());
+		parameters.add(process.get_ID());
+		listMovement = new Query(Env.getCtx(), MHRMovement.Table_Name
+				, " HR_Movement.C_BPartner_ID = ?"
+						//+ " AND HR_Movement.ValidFrom <= ? AND (HR_Movement.ValidTo >= ? OR HR_Movement.ValidTo IS NULL)"
+						+ " AND HR_Movement.HR_Process_ID = ?"
+						+ " AND hc.Type = 'C'", null)
+				.addJoinClause("INNER JOIN HR_Concept hc ON hc.HR_Concept_ID = HR_Movement.HR_Concept_ID")
+				.setParameters(parameters)
+				.setOrderBy("ValidTo")
+				.setOnlyActiveRecords(true)
+				.list();
+		
 		int row = 0;
 		int c = 0;
 		miniTable.setRowCount(row);
-		for (MHRAttribute mhrAttribute : listAttribute) {
+		for (MHRMovement movement : listMovement)
+		{
 			miniTable.setRowCount(row + 1);
-			miniTable.setValueAt(String.valueOf(mhrAttribute.getHR_Attribute_ID()), row, c++); // ID
-			miniTable.setValueAt(new MOrg(Env.getCtx(), mhrAttribute.getAD_Org_ID(), null).getName(), row, c++); // AD_Org_ID
-			miniTable.setValueAt(mhrAttribute.getHR_Concept().getName(), row, c++); // HR_Concept_ID
-			miniTable.setValueAt(mhrAttribute.getValidFrom(), row, c++); // ValidFrom
-			miniTable.setValueAt(mhrAttribute.getValidTo(), row, c++); // ValidTo
-			miniTable.setValueAt(getColumnType(mhrAttribute.getColumnType()), row, c++); // ColumnType
-			miniTable.setValueAt(mhrAttribute.getQty() != null ? mhrAttribute.getQty() : Env.ZERO, row, c++); // Qty
-			miniTable.setValueAt(mhrAttribute.getAmount() != null ? mhrAttribute.getAmount() : Env.ZERO, row, c++); // Amount
-			miniTable.setValueAt(mhrAttribute.getServiceDate(), row, c++); // ServiceDate
-			miniTable.setValueAt(mhrAttribute.getTextMsg(), row, c++); // TextMsg
-			miniTable.setValueAt(mhrAttribute.getDescription(), row, c++); // Description
+			miniTable.setValueAt(String.valueOf(movement.get_ID()), row, c++); // ID
+			miniTable.setValueAt(new MOrg(Env.getCtx(), movement.getAD_Org_ID(), null).getName(), row, c++); // AD_Org_ID
+			miniTable.setValueAt(movement.getHR_Concept().getName(), row, c++); // HR_Concept_ID
+			miniTable.setValueAt(movement.getValidFrom(), row, c++); // ValidFrom
+			miniTable.setValueAt(movement.getValidTo(), row, c++); // ValidTo
+			miniTable.setValueAt(getColumnType(movement.getColumnType()), row, c++); // ColumnType
+			miniTable.setValueAt(movement.getQty() != null ? movement.getQty() : Env.ZERO, row, c++); // Qty
+			miniTable.setValueAt(movement.getAmount() != null ? movement.getAmount() : Env.ZERO, row, c++); // Amount
+			miniTable.setValueAt(movement.getServiceDate(), row, c++); // ServiceDate
+			miniTable.setValueAt(movement.getTextMsg(), row, c++); // TextMsg
+			miniTable.setValueAt(movement.getDescription(), row, c++); // Description
 			row++;
 			c = 0;
 		}
 		miniTable.repaint();
 		miniTable.autoSize();
 	}
-
+	
 	public static String getColumnType(String value) {
-		int columnType_Ref_ID = MTable.get(Env.getCtx(), I_HR_Concept.Table_ID).getColumn(I_HR_Concept.COLUMNNAME_ColumnType).getAD_Reference_Value_ID();
-		String sql = "SELECT RLT.Name FROM AD_Ref_List RL JOIN AD_Ref_List_Trl RLT ON RL.AD_Ref_List_ID = RLT.AD_Ref_List_ID WHERE RL.AD_Reference_ID = ? AND RL.Value = ?";
+		
+		int columnType_Ref_ID = MTable.get(Env.getCtx(), I_HR_Concept.Table_ID)
+				.getColumn(I_HR_Concept.COLUMNNAME_ColumnType)
+				.getAD_Reference_Value_ID();
+		
+		String sql = "SELECT RLT.Name FROM AD_Ref_List RL"
+				+ " JOIN AD_Ref_List_Trl RLT ON RL.AD_Ref_List_ID = RLT.AD_Ref_List_ID"
+				+ " WHERE RL.AD_Reference_ID = ? AND RL.Value = ?";
+		
 		return DB.getSQLValueStringEx(null, sql, columnType_Ref_ID, value);
 	}
-
-	private void selectAttribute() {
+	
+	private void selectMovement() {
 		int index = miniTable.getSelectedIndex();
-
-		if (index >= 0) {
-			MHRAttribute attribute = new MHRAttribute(Env.getCtx(), Integer.parseInt(miniTable.getValueAt(index, 0).toString()), null);
-
+		
+		if (index >= 0)
+		{
+			MHRMovement movement = new MHRMovement(Env.getCtx()
+					, Integer.parseInt(miniTable.getValueAt(index, 0).toString())
+					, null);
+			
 			fieldConcept.setSelectedIndex(0);
-			fieldColumnType.setValue(getColumnType(attribute.getColumnType()));
+			fieldColumnType.setValue(getColumnType(movement.getColumnType()));
 			concept = null;
-
+			
 			buttonAdd.setEnabled(true);
 			buttonDelete.setEnabled(true);
 			fieldValidFromAtt.setReadWrite(true);
 			fieldValidToAtt.setReadWrite(true);
 			fieldDescription.setReadWrite(true);
-			fieldDescription.setValue(attribute.getDescription());
-			fieldValidToAtt.setValue(attribute.getValidTo());
-			fieldValidFromAtt.setValue(attribute.getValidFrom());
-
-			if (attribute.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Quantity)) {
+			fieldDescription.setValue(movement.getDescription());
+			fieldValidToAtt.setValue(movement.getValidTo());
+			fieldValidFromAtt.setValue(movement.getValidFrom());
+			
+			if (movement.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Quantity))
+			{
 				fieldQty.setVisible(true);
 				fieldAmount.setVisible(false);
 				fieldDate.setVisible(false);
 				fieldText.setVisible(false);
-
-				fieldQty.setValue(attribute.getQty());
-			} else if (attribute.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Amount)) {
+				
+				fieldQty.setValue(movement.getQty());
+			}
+			else if (movement.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Amount))
+			{
 				fieldQty.setVisible(false);
 				fieldAmount.setVisible(true);
 				fieldDate.setVisible(false);
 				fieldText.setVisible(false);
-
-				fieldAmount.setValue(attribute.getAmount());
-			} else if (attribute.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Date)) {
+				
+				fieldAmount.setValue(movement.getAmount());
+			}
+			else if (movement.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Date))
+			{
 				fieldQty.setVisible(false);
 				fieldAmount.setVisible(false);
 				fieldDate.setVisible(true);
 				fieldText.setVisible(false);
-
-				fieldDate.setValue(attribute.getServiceDate());
-			} else if (attribute.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Text)) {
+				
+				fieldDate.setValue(movement.getServiceDate());
+			}
+			else if (movement.getColumnType().equals(X_HR_Concept.COLUMNTYPE_Text)) {
 				fieldQty.setVisible(false);
 				fieldAmount.setVisible(false);
 				fieldDate.setVisible(false);
 				fieldText.setVisible(true);
-
-				fieldText.setValue(attribute.getTextMsg());
+				
+				fieldText.setValue(movement.getTextMsg());
 			}
 		}
 	}
-
-	private void addAttribute() {
+	
+	/**
+	 * @author Argenis Rodríguez
+	 */
+	private void addMovement() {
+		
+		if (fieldValidFromAtt.getValue() == null)
+			throw new AdempiereException(Msg.translate(Env.getCtx(), "HRValidFromMandatary"));
+		
+		MHRMovement movement = null;
+		MHRConcept concept = null;
+		
+		int index = miniTable.getSelectedIndex();
+		if (index >= 0 && this.concept == null)
+		{
+			movement = new MHRMovement(Env.getCtx(), Integer.parseInt(miniTable.getValueAt(index, 0).toString()), null);
+			concept = (MHRConcept) movement.getHR_Concept();
+		}
+		else
+		{
+			movement = new MHRMovement(Env.getCtx(), 0, null);
+			concept = this.concept;
+		}
+		
+		String columnType = concept.getColumnType();
+		
+		movement.setAD_Org_ID(process.getAD_Org_ID());
+		movement.setC_BPartner_ID(partner.get_ID());
+		movement.setHR_Concept_ID(concept.get_ID());
+		movement.setHR_Concept_Category_ID(concept.getHR_Concept_Category_ID());
+		movement.setDescription(fieldDescription.getValue().toString());
+		movement.setValidFrom((Timestamp) fieldValidFromAtt.getValue());
+		movement.setValidTo((Timestamp) fieldValidToAtt.getValue());
+		movement.setColumnType(columnType);
+		movement.setHR_Process_ID(process.get_ID());
+		movement.setHR_Department_ID(employee.getHR_Department_ID());
+		movement.setHR_Job_ID(employee.getHR_Job_ID());
+		movement.setIsRegistered(concept.isRegistered());
+		
+		if (X_HR_Concept.COLUMNTYPE_Quantity.equals(columnType))
+		{
+			BigDecimal qty = Optional.ofNullable((BigDecimal) fieldQty.getValue())
+					.orElse(BigDecimal.ZERO);
+			
+			if (BigDecimal.ZERO.compareTo(qty) == 0)
+				throw new AdempiereException(Msg.translate(Env.getCtx(), "HRValueMandatary"));
+			
+			movement.setQty(qty);
+		}
+		else if (X_HR_Concept.COLUMNTYPE_Amount.equals(columnType))
+		{
+			BigDecimal amount = Optional.ofNullable((BigDecimal) fieldAmount.getValue())
+					.orElse(BigDecimal.ZERO);
+			
+			if (BigDecimal.ZERO.compareTo(amount) == 0)
+				throw new AdempiereException(Msg.translate(Env.getCtx(), "HRValueMandatary"));
+			
+			movement.setAmount(amount);
+		}
+		else if (X_HR_Concept.COLUMNTYPE_Date.equals(columnType))
+		{
+			Timestamp date = (Timestamp) fieldDate.getValue();
+			
+			if (date == null)
+				throw new AdempiereException(Msg.translate(Env.getCtx(), "HRValueMandatary"));
+			
+			movement.setServiceDate(date);
+		}
+		else if (X_HR_Concept.COLUMNTYPE_Text.equals(columnType))
+		{
+			String text = (String) fieldText.getValue();
+			
+			if (Util.isEmpty(text, true))
+				throw new AdempiereException(Msg.translate(Env.getCtx(), "HRValueMandatary"));
+			
+			movement.setTextMsg(text);
+		}
+		
+		movement.saveEx();
+		
+		fieldConcept.setSelectedIndex(0);
+		this.concept = null;
+		fieldConcept.setSelectedIndex(0);
+		this.concept = null;
+		
+		fieldValidFromAtt.setValue(null);
+		fieldValidToAtt.setValue(null);
+		fieldColumnType.setValue("");
+		fieldDescription.setValue("");
+		fieldText.setValue("");
+		fieldDate.setValue(null);
+		fieldQty.setValue(Env.ZERO);
+		fieldAmount.setValue(Env.ZERO);
+		buttonAdd.setEnabled(false);
+		buttonDelete.setEnabled(false);
+		fieldValidFromAtt.setReadWrite(false);
+		fieldValidToAtt.setReadWrite(false);
+		fieldDescription.setReadWrite(false);
+		fieldQty.setVisible(false);
+		fieldAmount.setVisible(false);
+		fieldDate.setVisible(false);
+		fieldText.setVisible(false);
+		
+		loadTable();
+	}
+	
+	/*private void addAttribute() {
 
 		if (fieldValidFromAtt.getValue() == null) {
 			throw new AdempiereException(Msg.translate(Env.getCtx(), "HRValidFromMandatary"));
@@ -621,13 +799,46 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 		fieldText.setVisible(false);
 
 		loadTable();
-	}
+	}*/
+	
+	private void deleteMovement() {
+		
+		int index = miniTable.getSelectedIndex();
+		
+		if (index >= 0)
+		{
+			MHRMovement movement = listMovement.get(miniTable.getSelectedIndex());
+			movement.deleteEx(true);
+		}
+		
+		fieldConcept.setSelectedIndex(0);
+		this.concept = null;
 
-	private void deleteAttribute() {
+		fieldValidFromAtt.setValue(null);
+		fieldValidToAtt.setValue(null);
+		fieldColumnType.setValue("");
+		fieldDescription.setValue("");
+		fieldText.setValue("");
+		fieldDate.setValue(null);
+		fieldQty.setValue(Env.ZERO);
+		fieldAmount.setValue(Env.ZERO);
+		buttonAdd.setEnabled(false);
+		buttonDelete.setEnabled(false);
+		fieldValidFromAtt.setReadWrite(false);
+		fieldValidToAtt.setReadWrite(false);
+		fieldDescription.setReadWrite(false);
+		fieldQty.setVisible(false);
+		fieldAmount.setVisible(false);
+		fieldDate.setVisible(false);
+		fieldText.setVisible(false);
+		loadTable();
+	}
+	
+	/*private void deleteAttribute() {
 		int index = miniTable.getSelectedIndex();
 		if (index >= 0) {
-			MHRAttribute attribute = listAttribute.get(miniTable.getSelectedIndex());
-			attribute.deleteEx(true);
+			//MHRAttribute attribute = listAttribute.get(miniTable.getSelectedIndex());
+			//attribute.deleteEx(true);
 		}
 
 		fieldConcept.setSelectedIndex(0);
@@ -651,7 +862,7 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 		fieldDate.setVisible(false);
 		fieldText.setVisible(false);
 		loadTable();
-	}
+	}*/
 
 	@Override
 	public void onEvent(Event e) throws Exception {
@@ -662,11 +873,11 @@ public class HRActionNoticeForm implements IFormController, EventListener<Event>
 		} else if (e.getTarget().equals(fieldConcept)) {
 			changeConcept();
 		} else if (e.getTarget().equals(miniTable)) {
-			selectAttribute();
+			selectMovement();
 		} else if (e.getTarget().equals(buttonAdd)) {
-			addAttribute();
+			addMovement();
 		} else if (e.getTarget().equals(buttonDelete)) {
-			deleteAttribute();
+			deleteMovement();
 		}
 	}
 

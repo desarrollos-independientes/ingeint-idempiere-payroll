@@ -25,6 +25,8 @@ import org.compiere.model.Query;
 import org.compiere.util.CCache;
 import org.compiere.util.Env;
 
+import dev.itechsolutions.utils.ColumnUtils;
+
 /**
  * HR Employee Model
  *
@@ -65,6 +67,7 @@ public class MHREmployee extends X_HR_Employee
 	public static MBPartner[] getEmployees (MHRProcess p)
 	{
 		boolean IsPayrollApplicableToEmployee = false;
+		boolean isConceptApplicable = false;
 		List<Object> params = new ArrayList<Object>();
 		StringBuilder whereClause = new StringBuilder();
 				
@@ -77,14 +80,17 @@ public class MHREmployee extends X_HR_Employee
 		
 		MHRPayroll Payroll = MHRPayroll.get(Env.getCtx(),p.getHR_Payroll_ID());
 		
-		if (Payroll !=null || !Payroll.equals(null)){
+		if (Payroll !=null)
+		{
 			IsPayrollApplicableToEmployee = Payroll.get_ValueAsBoolean("IsemployeeApplicable");
+			isConceptApplicable = Payroll.get_ValueAsBoolean(ColumnUtils.COLUMNNAME_IsConceptApplicable);
 		}
+		
 		// This payroll not content periods, NOT IS a Regular Payroll > ogi-cd 28Nov2007
 		if(p.getHR_Payroll_ID() != 0 && p.getHR_Period_ID() != 0 && IsPayrollApplicableToEmployee)
 		
 		{
-		whereClause.append(" AND (e.HR_Payroll_ID IS NULL OR e.HR_Payroll_ID=?) " );
+			whereClause.append(" AND (e.HR_Payroll_ID IS NULL OR e.HR_Payroll_ID=?)");
 			params.add(p.getHR_Payroll_ID());
 		}
 		

@@ -199,6 +199,36 @@ public class MHRConcept extends X_HR_Concept
 		return 0;
 	}
 	
+	public List<MHRAttribute> getAttributes() {
+		
+		List<MHRAttribute> attributes = new Query(getCtx()
+				, MHRAttribute.Table_Name, "HR_Concept_ID = ?"
+				, get_TrxName())
+				.setOnlyActiveRecords(true)
+				.setParameters(get_ID())
+				.list();
+		
+		return attributes;
+	}
+	
+	@Override
+	protected boolean afterSave(boolean newRecord, boolean success) {
+		
+		if (newRecord)
+			return true;
+		
+		if (is_ValueChanged(COLUMNNAME_ColumnType))
+		{
+			for (MHRAttribute attribute: getAttributes())
+			{
+				attribute.setColumnType(getColumnType());
+				attribute.saveEx();
+			}
+		}
+		
+		return true;
+	}
+
 	/**
 	 *	Return Value
 	 *  @return Value

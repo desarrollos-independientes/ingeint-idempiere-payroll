@@ -15,11 +15,16 @@ package org.eevolution.model;
 
 import java.sql.ResultSet;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 import org.compiere.model.Query;
 import org.compiere.util.Env;
+import org.compiere.util.Msg;
 import org.compiere.util.Util;
+
+import dev.itechsolutions.util.TimestampUtil;
 
 /**
  * HR Attribute Model
@@ -97,6 +102,78 @@ public class MHRAttribute extends X_HR_Attribute
 			return att;
 		}
 	}	
+	
+	/**
+	 * @author Argenis Rodríguez
+	 */
+	@Override
+	protected boolean beforeSave(boolean newRecord) {
+		
+		Timestamp validFrom = getValidFrom();
+		Timestamp validTo = getValidTo();
+		
+		if (validTo != null
+				&& validTo.compareTo(validFrom) < 0)
+		{
+			log.saveError("Error"
+					, Msg.parseTranslation(getCtx(), "@ValidFrom@ > @ValidTo@"
+							+ " [" + validFrom + " > " + validTo + "]"));
+			return false;
+		}
+		
+		if (newRecord)
+		{
+			String whereClause = "HR_Concept_ID = ? AND ValidTo IS NULL";
+			List<Object> parameters = new ArrayList<Object>();
+			parameters.add(getHR_Concept_ID());
+			
+			//Add Optional Parameters
+			if (getHR_Payroll_ID() > 0)
+			{
+				whereClause += " AND HR_Payroll_ID = ?";
+				parameters.add(getHR_Payroll_ID());
+			}
+			else
+				whereClause += " AND HR_Payroll_ID IS NULL";
+			
+			if (getHR_Job_ID() > 0)
+			{
+				whereClause += " AND HR_Job_ID = ?";
+				parameters.add(getHR_Job_ID());
+			}
+			else
+				whereClause += " AND HR_Job_ID IS NULL";
+			
+			if (getHR_Department_ID() > 0)
+			{
+				whereClause += " AND HR_Department_ID = ?";
+				parameters.add(getHR_Department_ID());
+			}
+			else
+				whereClause += " AND HR_Department_ID IS NULL";
+			
+			if (getC_BPartner_ID() > 0)
+			{
+				whereClause += " AND C_BPartner_ID = ?";
+				parameters.add(getC_BPartner_ID());
+			} else
+				whereClause += " AND C_BPartner_ID IS NULL";
+			
+			MHRAttribute att = new Query(getCtx(), Table_Name
+					, whereClause, get_TrxName())
+					.setParameters(parameters)
+					.first();
+			
+			if (att != null)
+			{
+				Timestamp newValidTo = TimestampUtil.minusSecond(validFrom, 1);
+				att.setValidTo(newValidTo);
+				att.saveEx();
+			}
+		}
+		
+		return true;
+	}
 	
 	/**
 	 * @param ctx

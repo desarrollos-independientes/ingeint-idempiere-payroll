@@ -15,6 +15,7 @@
  *****************************************************************************/
 package org.eevolution.model;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.util.Properties;
@@ -38,7 +39,9 @@ public class MHRMovement extends X_HR_Movement
 	 * 
 	 */
 	private static final long serialVersionUID = -9074136731316014532L;
-
+	
+	private MHRConcept concept = null;
+	
 	/**
 	 * 	Standard Constructor
 	 *	@param ctx context
@@ -106,7 +109,7 @@ public class MHRMovement extends X_HR_Movement
 			setTextMsg(impHRm.getTextMsg());
 		}
 	}	//	MHRMovement
-
+	
 	public MHRMovement (MHRProcess proc, I_HR_Concept concept)
 	{
 		this(proc.getCtx(), 0, proc.get_TrxName());
@@ -159,7 +162,8 @@ public class MHRMovement extends X_HR_Movement
 			else if(MHRConcept.COLUMNTYPE_Amount.equals(columnType))
 			{
 					int precision = MCurrency.getStdPrecision(getCtx(), Env.getContextAsInt(p_ctx, "$C_Currency_ID"));				
-					BigDecimal amount = new BigDecimal(value.toString()).setScale(precision, BigDecimal.ROUND_HALF_UP);
+					BigDecimal amount = new BigDecimal(value.toString())
+							.setScale(precision, RoundingMode.HALF_UP);
 				setAmount(amount);
 				setQty(Env.ZERO);
 			} 
@@ -209,5 +213,15 @@ public class MHRMovement extends X_HR_Movement
 			
 		setAccountSign(getHR_Concept().getAccountSign());
 		return true;
-	}       
+	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @return Concept
+	 */
+	public MHRConcept getConcept() {
+		if (concept == null)
+			concept = (MHRConcept) getHR_Concept();
+		return concept;
+	}
 }	//	HRMovement
