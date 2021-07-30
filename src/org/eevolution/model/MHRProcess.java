@@ -84,6 +84,7 @@ import net.frontuari.utils.FactorMovement;
  * 				https://www.ingeint.com
  * @contributor Jorge Colmenarez - jcolmenarez@frontuari.net - FRONTUARI CA
  * 				http://frontuari.net
+ * @contibutor Argenis Rodríguez - arodriguez@itechsolutions.dev
  */
 public class MHRProcess extends X_HR_Process implements DocAction {
 	/**
