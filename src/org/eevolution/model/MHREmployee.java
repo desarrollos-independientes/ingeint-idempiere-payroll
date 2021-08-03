@@ -25,7 +25,7 @@ import org.compiere.model.Query;
 import org.compiere.util.CCache;
 import org.compiere.util.Env;
 
-import dev.itechsolutions.utils.ColumnUtils;
+import dev.itechsolutions.util.ColumnUtils;
 
 /**
  * HR Employee Model

@@ -26,18 +26,23 @@ import java.text.SimpleDateFormat;
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 
 import org.adempiere.exceptions.AdempiereException;
 import org.compiere.model.MBPartner;
 import net.frontuari.model.MFTUCalendar;
+import net.frontuari.model.MNonBusinessDay;
+
 import org.compiere.model.MCurrency;
 import org.compiere.model.MDocType;
 import org.compiere.model.MFactAcct;
@@ -60,6 +65,7 @@ import org.compiere.util.Language;
 import org.compiere.util.Msg;
 import org.compiere.util.TimeUtil;
 
+import dev.itechsolutions.util.ColumnUtils;
 import dev.itechsolutions.util.TimestampUtil;
 import net.frontuari.utils.FactorMovement;
 
@@ -136,7 +142,8 @@ public class MHRProcess extends X_HR_Process implements DocAction {
 			.append(" import java.math.*;").append(" import java.sql.*;")
 			.append(" import org.eevolution.model.*;")
 			.append(" import java.time.DayOfWeek;")
-			.append(" import java.time.temporal.ChronoUnit;");
+			.append(" import java.time.temporal.ChronoUnit;")
+			.append(" import dev.itechsolutions.util.TimestampUtil;");
 
 	public static void addScriptImportPackage(String packageName) {
 		s_scriptImport.append(" import ").append(packageName).append(";");
@@ -611,6 +618,62 @@ public class MHRProcess extends X_HR_Process implements DocAction {
 				.setOrderBy(orderByClause.toString()).list();
 		return list.toArray(new MHRMovement[list.size()]);
 	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @param pConcept
+	 * @param dateFrom
+	 * @param dateTo
+	 * @param allPayroll
+	 * @return
+	 */
+	public double getConceptMovement(String pConcept
+			, Timestamp dateFrom, Timestamp dateTo, boolean allPayroll) {
+		
+		MHRConcept concept = MHRConcept.forValue(getCtx(), pConcept);
+		
+		if (concept == null)
+			throw new AdempiereException("Concept not Found "
+					+ pConcept);
+		
+		MHRMovement movement = m_movement.get(concept.get_ID());
+		
+		if (movement == null)
+		{
+			createMovementFromConcept(concept, concept.isPrinted());
+			movement = m_movement.get(concept.get_ID());
+		}
+		
+		BigDecimal retVal = Optional.ofNullable(movement)
+				.map(m -> m.getAmount())
+				.orElse(BigDecimal.ZERO);
+		
+		String where = "hrp.DocStatus IN ('CO', 'CL', 'IP') AND hrp.DateAcct BETWEEN ? AND ?"
+				+ " AND HR_Movement.HR_Concept_ID = ?"
+				+ " AND HR_Movement.C_BPartner_ID = ?";
+		
+		List<Object> params = new ArrayList<Object>(5);
+		
+		params.add(dateFrom);
+		params.add(dateTo);
+		params.add(concept.get_ID());
+		params.add(m_C_BPartner_ID);
+		
+		if (!allPayroll)
+		{
+			where += " AND hrp.HR_Payroll_ID = ?";
+			params.add(getHR_Payroll_ID());
+		}
+		
+		retVal = Optional.ofNullable(new Query(getCtx(), MHRMovement.Table_Name, where, get_TrxName())
+				.addJoinClause("INNER JOIN HR_Process hrp ON hrp.HR_Process_ID = HR_Movement.HR_Process_ID")
+				.setParameters(params)
+				.sum(MHRMovement.COLUMNNAME_Amount))
+			.orElse(BigDecimal.ZERO)
+			.add(retVal);
+		
+		return retVal.doubleValue();
+	}
 
 	/**
 	 * Load HR_Movements and store them in a HR_Concept_ID->MHRMovement
@@ -694,11 +757,35 @@ public class MHRProcess extends X_HR_Process implements DocAction {
 
 		} catch (Exception e) {
 			throw new AdempiereException("Execution error - @AD_Rule_ID@="
-					+ rulee.getValue() + " \n " + errorMsg);
+					+ rulee.getValue() + " \n " + errorMsg + " \n " + e.getLocalizedMessage());
 		}
 		if (rulee.get_Value("ctxVariable")!=null)
 			m_scriptCtx.put((String) rulee.get_Value("ctxVariable"), result);
 		return result;
+	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @param date
+	 * @param units
+	 * @param unit
+	 * @return
+	 */
+	public Timestamp getAdd(Timestamp date, double units, TemporalUnit unit) {
+		
+		return TimestampUtil.add(date, units, unit);
+	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @param date
+	 * @param units
+	 * @param unit
+	 * @return
+	 */
+	public Timestamp getMinus(Timestamp date, double units, TemporalUnit unit) {
+		
+		return TimestampUtil.minus(date, units, unit);
 	}
 
 	/**
@@ -1202,14 +1289,20 @@ public class MHRProcess extends X_HR_Process implements DocAction {
 		
 		if (m == null)
 		{
-			createMovementFromConcept(concept, concept.isPrinted());
+			boolean isPrinted = Arrays.stream(linesConcept)
+					.filter(lineConcept -> lineConcept.getHR_Concept_ID() == concept.get_ID())
+					.findFirst()
+					.map(lineConcept -> lineConcept.isPrinted())
+					.orElse(false);
+			
+			createMovementFromConcept(concept, concept.isPrinted() || isPrinted);
 			m = m_movement.get(concept.get_ID());
 		}
 		
 		if (m == null)
 			throw new AdempiereException("Concept " + concept.getValue()
 			+ " not created");
-
+		
 		String type = m.getColumnType();
 		if (MHRMovement.COLUMNTYPE_Amount.equals(type))
 			return m.getAmount().doubleValue();
@@ -1240,6 +1333,36 @@ public class MHRProcess extends X_HR_Process implements DocAction {
 				.reduce(BigDecimal.ZERO, (num1, num2) -> num1.add(num2));
 		
 		return retVal.doubleValue();
+	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @param dateFrom
+	 * @param dateTo
+	 * @param onlyWeekDays
+	 * @return
+	 */
+	public double getHoliDays(Timestamp dateFrom, Timestamp dateTo
+			, boolean onlyWeekDays) {
+		
+		List<Object> params = new ArrayList<Object>(3);
+		String where = "Date1 BETWEEN ? AND ?";
+		
+		params.add(dateFrom);
+		params.add(dateTo);
+		
+		if (onlyWeekDays)
+		{
+			where += " AND EXTRACT(DOW FROM Date1) NOT IN (?, ?)";
+			params.add(ColumnUtils.SATURDAY);
+			params.add(ColumnUtils.SUNDAY);
+		}
+		
+		int retVal = new Query(getCtx(), MNonBusinessDay.Table_Name, where, get_TrxName())
+			.setParameters(params)
+			.count();
+		
+		return retVal;
 	}
 	
 	/**
@@ -1294,7 +1417,7 @@ public class MHRProcess extends X_HR_Process implements DocAction {
 
 		if (concept == null)
 			return null; // TODO throw exception ?
-
+		
 		MHRMovement m = m_movement.get(concept.get_ID());
 		
 		if (m == null)

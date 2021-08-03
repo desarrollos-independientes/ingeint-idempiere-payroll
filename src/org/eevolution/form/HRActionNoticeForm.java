@@ -65,7 +65,7 @@ import org.zkoss.zul.Center;
 import org.zkoss.zul.North;
 import org.zkoss.zul.Space;
 
-import dev.itechsolutions.utils.ColumnUtils;
+import dev.itechsolutions.util.ColumnUtils;
 
 /**
  * Payroll Notice Form

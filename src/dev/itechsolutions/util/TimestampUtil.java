@@ -29,6 +29,18 @@ public class TimestampUtil {
 	/**
 	 * @author Argenis Rodríguez
 	 * @param date
+	 * @param units
+	 * @param unit
+	 * @return
+	 */
+	public static Timestamp minus(Timestamp date, double units, TemporalUnit unit) {
+		
+		return add(date, -units, unit);
+	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @param date
 	 * @param days
 	 * @return
 	 */
