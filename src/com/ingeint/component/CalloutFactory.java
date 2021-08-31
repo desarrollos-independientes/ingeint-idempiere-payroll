@@ -24,10 +24,13 @@
 
 package com.ingeint.component;
 
+import org.eevolution.model.MHRPayrollConcept;
+
 import com.ingeint.base.CustomCalloutFactory;
 import com.ingeint.callout.UpdateAmtPaymentSel;
 import com.ingeint.model.MHRPaymentSelectionLine;
 
+import dev.itechsolutions.callout.CalloutPayrollConcept;
 import net.frontuari.callout.CalloutLVEHRProcessReport;
 import net.frontuari.model.MLVEHRProcessReportLine;
 
@@ -49,6 +52,6 @@ public class CalloutFactory extends CustomCalloutFactory {
 	protected void initialize() {
 		registerCallout(MHRPaymentSelectionLine.Table_Name, MHRPaymentSelectionLine.COLUMNNAME_PayAmt, UpdateAmtPaymentSel.class);
 		registerCallout(MLVEHRProcessReportLine.Table_Name, MLVEHRProcessReportLine.COLUMNNAME_HR_Concept_ID, CalloutLVEHRProcessReport.class);
+		registerCallout(MHRPayrollConcept.Table_Name, MHRPayrollConcept.COLUMNNAME_HR_Concept_ID, CalloutPayrollConcept.class);
 	}
-
 }

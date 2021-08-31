@@ -113,6 +113,14 @@ public abstract class CustomCallout implements IColumnCallout {
 	public String getColumnName() {
 		return mField.getColumnName();
 	}
+	
+	/**
+	 * @author Argenis Rodríguez
+	 * @return
+	 */
+	public boolean isCalloutActive() {
+		return mTab != null ? mTab.getActiveCallouts().length > 1 : false;
+	}
 
 	@Override
 	public String start(Properties ctx, int WindowNo, GridTab mTab, GridField mField, Object value, Object oldValue) {
